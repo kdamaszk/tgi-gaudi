@@ -389,7 +389,7 @@ mod tests {
 
     #[test]
     fn test_append() {
-        let mut state = State::new(false, 1, None);
+        let mut state = State::new(false, 100, 200, 1, None);
         let (entry, _guard) = default_entry();
 
         assert_eq!(state.next_id, 0);
@@ -405,7 +405,7 @@ mod tests {
 
     #[test]
     fn test_next_batch_empty() {
-        let mut state = State::new(false, 1, None);
+        let mut state = State::new(false, 100, 200, 1, None);
 
         assert!(state.next_batch(None, 1, 1).is_none());
         assert!(state.next_batch(Some(1), 1, 1).is_none());
@@ -413,7 +413,7 @@ mod tests {
 
     #[test]
     fn test_next_batch_min_size() {
-        let mut state = State::new(false, 1, None);
+        let mut state = State::new(false, 100, 200, 1, None);
         let (entry1, _guard1) = default_entry();
         let (entry2, _guard2) = default_entry();
         state.append(entry1);
@@ -445,7 +445,7 @@ mod tests {
 
     #[test]
     fn test_next_batch_token_budget() {
-        let mut state = State::new(false, 1, None);
+        let mut state = State::new(false, 100, 200, 1, None);
         let (entry1, _guard1) = default_entry();
         let (entry2, _guard2) = default_entry();
         state.append(entry1);
@@ -478,14 +478,14 @@ mod tests {
 
     #[tokio::test]
     async fn test_queue_append() {
-        let queue = Queue::new(false, 1, None);
+        let queue = Queue::new(false, 100, 200, 1, None);
         let (entry, _guard) = default_entry();
         queue.append(entry);
     }
 
     #[tokio::test]
     async fn test_queue_next_batch_empty() {
-        let queue = Queue::new(false, 1, None);
+        let queue = Queue::new(false, 100, 200, 1, None);
 
         assert!(queue.next_batch(None, 1, 1).await.is_none());
         assert!(queue.next_batch(Some(1), 1, 1).await.is_none());
@@ -493,7 +493,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_queue_next_batch_min_size() {
-        let queue = Queue::new(false, 1, None);
+        let queue = Queue::new(false, 100, 200, 1, None);
         let (entry1, _guard1) = default_entry();
         let (entry2, _guard2) = default_entry();
         queue.append(entry1);
@@ -526,7 +526,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_queue_next_batch_token_budget() {
-        let queue = Queue::new(false, 1, None);
+        let queue = Queue::new(false, 100, 200, 1, None);
         let (entry1, _guard1) = default_entry();
         let (entry2, _guard2) = default_entry();
         queue.append(entry1);
@@ -551,7 +551,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_queue_next_batch_dropped_receiver() {
-        let queue = Queue::new(false, 1, None);
+        let queue = Queue::new(false, 100, 200, 1, None);
         let (entry, _) = default_entry();
         queue.append(entry);
 
