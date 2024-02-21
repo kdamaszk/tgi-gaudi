@@ -129,7 +129,7 @@ async fn queue_task(
             } => span.in_scope(|| {
                 let next_batch = state.next_batch(min_size, prefill_token_budget, token_budget);
                 response_sender.send(next_batch).unwrap();
-                metrics::gauge!("tgi_queue_size", state.entries.len() as f64);
+                metrics::gauge!("tgi_queue_size", state.buckets.len() as f64);
             }),
         }
     }
