@@ -4,6 +4,7 @@ use crate::validation::ValidGenerateRequest;
 use nohash_hasher::{BuildNoHashHasher, IntMap};
 use std::cmp::min;
 use std::collections::VecDeque;
+use std::env;
 use text_generation_client::{Batch, Request};
 use tokio::sync::{mpsc, oneshot};
 use tokio::time::Instant;
@@ -103,7 +104,9 @@ async fn queue_task(
     window_size: Option<u32>,
     mut receiver: mpsc::UnboundedReceiver<QueueCommand>,
 ) {
-    let mut state = State::new(
+    // let smart_scheduling: bool = env::var("SMART_SCHEDULING").ok().map_or(false, |value| value.to_lowercase() == "true");
+
+    let mut state = BucketizedState::new(
         requires_padding,
         max_input_length,
         max_total_tokens,
@@ -329,6 +332,262 @@ impl State {
     }
 }
 
+
+#[derive(Debug)]
+struct Buckets {
+    buckets: Vec<u32>,
+    entries: Vec<VecDeque<(u64, Entry)>>,
+}
+
+impl Buckets {
+    fn new(max_input_length: u32) -> Self {
+        // divide max_input_length into a few buckets
+        let base: u32 = 2;
+        let buckets: Vec<u32> = (0..4).rev()
+            .map(|pow| max_input_length / base.pow(pow))
+            .collect();
+        let entries: Vec<VecDeque<(u64, Entry)>> = buckets.iter()
+            .map(|_| VecDeque::with_capacity(128))
+            .collect();
+        Self {
+            buckets,
+            entries
+        }
+    }
+
+    fn get_bucket_id(&mut self, input_length: u32) -> usize {
+        for (id, bucket) in self.buckets.iter().enumerate() {
+            if *bucket >= input_length {
+                return id;
+            }
+        }
+        // max bucket size
+        self.buckets.len() - 1
+    }
+
+    fn append(&mut self, id: u64, entry: Entry) {
+        let bucket_id: usize = self.get_bucket_id(entry.request.input_length);
+        self.entries[bucket_id].push_back((id, entry));
+    }
+
+    fn is_empty(&mut self) -> bool {
+        self.entries.iter().all(|e| e.is_empty())
+    }
+
+    fn len(&mut self) -> usize {
+        self.entries.iter().map(|e| e.len()).sum()
+    }
+
+    fn pop_front(&mut self, last_bucket: Option<usize>) -> Option<(u64, Entry)> {
+        if let Some(last_bucket) = last_bucket {
+            // iterate over all buckets, prefer the same or smaller one
+            let buckets_order: Vec<usize> = if last_bucket == 0 {
+                (0..self.buckets.len()).collect()
+            } else {
+                std::iter::once(last_bucket)
+                    .chain((0..last_bucket)
+                    .chain((last_bucket+1)..self.buckets.len()))
+                    .collect()
+            };
+            for bucket_id in buckets_order {
+                if !self.entries[bucket_id].is_empty() {
+                    return self.entries[bucket_id].pop_front();
+                }
+            }
+        } else {
+            if self.len() > 0 {
+                // first entry in current iteration - return the oldest one
+                let (oldest_entry_bucket, _) = self.entries.iter().enumerate()
+                    .filter(|(_index, entries)| !entries.is_empty())
+                    .map(|(_index, entries)| (_index, entries[0].1.queue_time))
+                    .min_by_key(|&(_index, time)| time)
+                    .unwrap();
+                return self.entries[oldest_entry_bucket].pop_front();
+            }
+        }
+        None
+    }
+
+    fn push_front(&mut self, id: u64, mut entry: Entry) {
+        let bucket_id: usize = self.get_bucket_id(entry.request.input_length);
+        self.entries[bucket_id].push_front((id, entry));
+    }
+}
+
+
+/// Queue State
+#[derive(Debug)]
+struct BucketizedState {
+    /// Queue entries organized in a Vec
+    buckets: Buckets,
+
+    /// Id of the next entry
+    next_id: u64,
+
+    /// Id of the next batch
+    next_batch_id: u64,
+
+    /// Whether the model is using padding
+    requires_padding: bool,
+
+    /// Maximum input length, required for padding scenario
+    max_input_length: u32,
+
+    /// Maximum input and output length, required for padding scenario
+    max_total_tokens: u32,
+
+    /// Paged Attention block size
+    block_size: u32,
+
+    /// Sliding window
+    window_size: Option<u32>,
+}
+
+impl BucketizedState {
+    fn new(
+        requires_padding: bool,
+        max_input_length: u32,
+        max_total_tokens: u32,
+        block_size: u32,
+        window_size: Option<u32>
+    ) -> Self {
+        Self {
+            buckets: Buckets::new(max_input_length),
+            next_id: 0,
+            next_batch_id: 0,
+            requires_padding,
+            max_input_length,
+            max_total_tokens,
+            block_size,
+            window_size,
+        }
+    }
+
+    /// Append an entry to the queue
+    fn append(&mut self, mut entry: Entry) {
+        // Create a span that will live as long as the entry is in the queue waiting to be batched
+        let queue_span = info_span!(parent: &entry.span, "queued");
+        entry.temp_span = Some(queue_span);
+
+        self.buckets.append(self.next_id, entry);
+        self.next_id += 1;
+    }
+
+    // Get the next batch
+    fn next_batch(
+        &mut self,
+        min_size: Option<usize>,
+        prefill_token_budget: u32,
+        token_budget: u32,
+    ) -> Option<NextBatch> {
+        if self.buckets.is_empty() {
+            return None;
+        }
+
+        // Check if we have enough entries
+        if let Some(min_size) = min_size {
+            if self.buckets.len() < min_size {
+                return None;
+            }
+        }
+
+        // Create span for this batch to add context to inference calls
+        let next_batch_span = info_span!(parent: None, "batch", batch_size = tracing::field::Empty);
+        next_batch_span.follows_from(&Span::current());
+
+        let mut batch_requests = Vec::with_capacity(self.buckets.len());
+        let mut batch_entries =
+            IntMap::with_capacity_and_hasher(self.buckets.len(), BuildNoHashHasher::default());
+
+        let mut prefill_tokens: u32 = 0;
+        let mut decode_tokens: u32 = 0;
+        let mut last_bucket: Option<usize> = None;
+
+        // Pop entries starting from the front of the queue
+        while let Some((id, mut entry)) = self.buckets.pop_front(last_bucket) {
+            // Filter entries where the response receiver was dropped (== entries where the request
+            // was dropped by the client)
+            // if entry.response_tx.is_closed() {
+            //     metrics::increment_counter!("tgi_request_failure", "err" => "dropped");
+            //     continue;
+            // }
+
+            prefill_tokens = (batch_requests.len() + 1) as u32 * self.max_input_length;
+            decode_tokens = (batch_requests.len() + 1) as u32 * (self.max_total_tokens - self.max_input_length);
+            if prefill_tokens > prefill_token_budget || (prefill_tokens + decode_tokens) > token_budget
+            {
+                // Entry is over budget
+                // Add it back to the front
+                self.buckets.push_front(id, entry);
+                break;
+            }
+
+            // Save bucket id for next iteration
+            last_bucket = Some(
+                self.buckets.get_bucket_id(entry.request.input_length)
+            );
+
+            // Create a new span to link the batch back to this entry
+            let entry_batch_span = info_span!(parent: &entry.span, "infer");
+            // Add relationships
+            next_batch_span.follows_from(&entry_batch_span);
+            entry_batch_span.follows_from(&next_batch_span);
+            // Update entry
+            entry.temp_span = Some(entry_batch_span);
+
+            batch_requests.push(Request {
+                id,
+                prefill_logprobs: entry.request.decoder_input_details,
+                inputs: entry.request.inputs.clone(),
+                truncate: entry.request.truncate,
+                parameters: Some(entry.request.parameters.clone()),
+                stopping_parameters: Some(entry.request.stopping_parameters.clone()),
+                top_n_tokens: entry.request.top_n_tokens,
+            });
+            // Set batch_time
+            entry.batch_time = Some(Instant::now());
+            // Insert in batch_entries IntMap
+            batch_entries.insert(id, entry);
+        }
+
+        // Empty batch
+        if batch_requests.is_empty() {
+            return None;
+        }
+
+        // Check if our batch is big enough
+        if let Some(min_size) = min_size {
+            // Batch is too small
+            if batch_requests.len() < min_size {
+                // Add back entries to the queue in the correct order
+                for r in batch_requests.into_iter().rev() {
+                    let id = r.id;
+                    let entry = batch_entries.remove(&id).unwrap();
+                    self.buckets.push_front(id, entry);
+                }
+                return None;
+            }
+        }
+
+        // Final batch size
+        let size = batch_requests.len() as u32;
+        next_batch_span.record("batch_size", size);
+
+        let batch = Batch {
+            id: self.next_batch_id,
+            requests: batch_requests,
+            size,
+            max_tokens: (prefill_tokens + decode_tokens),
+        };
+        // Increment batch id
+        self.next_batch_id += 1;
+
+        metrics::histogram!("tgi_batch_next_size", batch.size as f64);
+
+        Some((batch_entries, batch, next_batch_span))
+    }
+}
+
 type NextBatch = (IntMap<u64, Entry>, Batch, Span);
 
 #[derive(Debug)]
@@ -349,16 +608,17 @@ mod tests {
     use text_generation_client::{NextTokenChooserParameters, StoppingCriteriaParameters};
     use tracing::info_span;
 
-    fn default_entry() -> (
+    fn _get_entry(input_length: u32) -> (
         Entry,
         mpsc::UnboundedReceiver<Result<InferStreamResponse, InferError>>,
     ) {
         let (response_tx, receiver_tx) = mpsc::unbounded_channel();
 
+        let inputs = "test".repeat(input_length as usize).to_string();
         let entry = Entry {
             request: ValidGenerateRequest {
-                inputs: "".to_string(),
-                input_length: 0,
+                inputs: inputs,
+                input_length: input_length,
                 truncate: 0,
                 decoder_input_details: false,
                 parameters: NextTokenChooserParameters {
@@ -387,9 +647,48 @@ mod tests {
         (entry, receiver_tx)
     }
 
+    fn default_entry() -> (
+        Entry,
+        mpsc::UnboundedReceiver<Result<InferStreamResponse, InferError>>,
+    ) {
+        _get_entry(0)
+    }
+
+    fn default_entry_length_100() -> (
+        Entry,
+        mpsc::UnboundedReceiver<Result<InferStreamResponse, InferError>>,
+    ) {
+        _get_entry(100)
+    }
+
+    fn default_entry_length_300() -> (
+        Entry,
+        mpsc::UnboundedReceiver<Result<InferStreamResponse, InferError>>,
+    ) {
+        _get_entry(300)
+    }
+
+    fn default_entry_length_600() -> (
+        Entry,
+        mpsc::UnboundedReceiver<Result<InferStreamResponse, InferError>>,
+    ) {
+        _get_entry(600)
+    }
+
+    fn default_entry_length_1000() -> (
+        Entry,
+        mpsc::UnboundedReceiver<Result<InferStreamResponse, InferError>>,
+    ) {
+        _get_entry(1000)
+    }
+
+    fn default_state() -> State {
+        State::new(false, 100, 200, 1, None)
+    }
+
     #[test]
     fn test_append() {
-        let mut state = State::new(false, 100, 200, 1, None);
+        let mut state = default_state();
         let (entry, _guard) = default_entry();
 
         assert_eq!(state.next_id, 0);
@@ -405,7 +704,7 @@ mod tests {
 
     #[test]
     fn test_next_batch_empty() {
-        let mut state = State::new(false, 100, 200, 1, None);
+        let mut state = default_state();
 
         assert!(state.next_batch(None, 1, 1).is_none());
         assert!(state.next_batch(Some(1), 1, 1).is_none());
@@ -413,7 +712,7 @@ mod tests {
 
     #[test]
     fn test_next_batch_min_size() {
-        let mut state = State::new(false, 100, 200, 1, None);
+        let mut state = default_state();
         let (entry1, _guard1) = default_entry();
         let (entry2, _guard2) = default_entry();
         state.append(entry1);
@@ -445,7 +744,7 @@ mod tests {
 
     #[test]
     fn test_next_batch_token_budget() {
-        let mut state = State::new(false, 100, 200, 1, None);
+        let mut state = default_state();
         let (entry1, _guard1) = default_entry();
         let (entry2, _guard2) = default_entry();
         state.append(entry1);
@@ -556,5 +855,106 @@ mod tests {
         queue.append(entry);
 
         assert!(queue.next_batch(None, 1, 1).await.is_none());
+    }
+
+    fn get_smart_state() -> BucketizedState {
+        let mut state = BucketizedState::new(false, 1024, 2048, 1, None);
+        assert_eq!(state.next_id, 0);
+        assert_eq!(state.buckets.len(), 0);
+        state
+    }
+
+    fn append_entry(state: &mut BucketizedState, length: usize) {
+        // save state status
+        let id = state.next_id;
+        let size = state.buckets.len();
+
+        // append entry
+        let (entry, _guard) = if length <= 100 {
+            default_entry_length_100()
+        } else if length <= 300 {
+            default_entry_length_300()
+        } else if length <= 600 {
+            default_entry_length_600()
+        } else {
+            default_entry_length_1000()
+        };
+        state.append(entry);
+
+        // verify
+        assert_eq!(state.next_id, id+1);
+        assert_eq!(state.buckets.len(), size+1);
+    }
+
+    #[test]
+    fn test_smart_state_append_one() {
+        let mut state = get_smart_state();
+
+        append_entry(&mut state, 100);
+
+        let (id, _) = state.buckets.pop_front(None).unwrap();
+        assert_eq!(id, 0);
+    }
+
+    #[test]
+    fn test_smart_state_append_three() {
+        let mut state = get_smart_state();
+
+        // append three requests
+        append_entry(&mut state, 100);
+        append_entry(&mut state, 300);
+        append_entry(&mut state, 100);
+
+        // pop the oldest one
+        let mut last_bucket: Option<usize> = None;
+        let (id, entry) = state.buckets.pop_front(last_bucket).unwrap();
+        assert_eq!(id, 0);
+        last_bucket = Some(
+            state.buckets.get_bucket_id(entry.request.input_length)
+        );
+
+        // pop next request for the same bucket -- id 2
+        let (id, entry) = state.buckets.pop_front(last_bucket).unwrap();
+        assert_eq!(id, 2);
+        last_bucket = Some(
+            state.buckets.get_bucket_id(entry.request.input_length)
+        );
+
+        // pop next request for the same bucket -- id 1, as the smallest bucket is empty
+        let (id, _) = state.buckets.pop_front(last_bucket).unwrap();
+        assert_eq!(id, 1);
+        assert_eq!(state.buckets.len(), 0);
+    }
+
+    #[test]
+    fn test_smart_state_next_batch_empty() {
+        let mut state = get_smart_state();
+
+        assert!(state.next_batch(None, 1, 1).is_none());
+        assert!(state.next_batch(Some(1), 1, 1).is_none());
+    }
+
+    #[test]
+    fn test_smart_state_get_next_batch() {
+        let mut state = get_smart_state();
+
+        // append four requests into two buckets
+        append_entry(&mut state, 100);
+        append_entry(&mut state, 300);
+        append_entry(&mut state, 100);
+        append_entry(&mut state, 300);
+
+        // get next batch of 2 requests
+        let next_batch = state.next_batch(Some(2), 2048, 4096); // parametrize
+        assert!(next_batch.is_some());
+        let (_, batch, _) = next_batch.unwrap();
+        assert_eq!(batch.requests.iter().map(|r| r.id).collect::<Vec<u64>>(), vec![0, 2]);
+
+        // get next batch of 2 requests
+        let next_batch = state.next_batch(Some(2), 2048, 4096); // parametrize
+        assert!(next_batch.is_some());
+        let (_, batch, _) = next_batch.unwrap();
+        assert_eq!(batch.requests.iter().map(|r| r.id).collect::<Vec<u64>>(), vec![1, 3]);
+        assert_eq!(state.buckets.len(), 0);
     }
 }
