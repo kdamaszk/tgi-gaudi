@@ -331,7 +331,6 @@ impl State {
     }
 }
 
-
 #[derive(Debug)]
 struct Entries {
     time_limit: f32,
@@ -366,50 +365,41 @@ impl Entries {
     }
 
     fn next_batch(&mut self, min_size: Option<usize>, budget: usize) -> Vec<(u64, Entry)> {
-        let fast_bs: usize = 8;
-        let slow_bs: usize = 4;
-        if budget < fast_bs {
-            // skip batching due to the lack of place in decode batch
-            return vec![];
-        }
+        let fast_bs: usize = min(8, budget);
+        let slow_bs: usize = min(4, budget);
 
         self.update_queues();
 
-        let mut batch: Vec<(u64, Entry)> = Vec::with_capacity(budget);
-        if self.batch_available(false, slow_bs) {
-            while batch.len() < slow_bs && self.slow_entries.len() > 0 {
-                let (_, (id, entry)) = self.slow_entries.pop_front().unwrap();
-                batch.push((id, entry));
-            }
+        let (bs, entries) = if self.batch_available(false, slow_bs) {
+            (slow_bs, &mut self.slow_entries)
         } else if self.batch_available(true, fast_bs) {
-            while batch.len() < fast_bs && self.fast_entries.len() > 0 {
-                let (_, (id, entry)) = self.fast_entries.pop_front().unwrap();
-                batch.push((id, entry));
-            }
+            (fast_bs, &mut self.fast_entries)
         } else if min_size.is_none() && self.fast_entries.len() > 0 {
-            while batch.len() < fast_bs && self.fast_entries.len() > 0 {
-                let (_, (id, entry)) = self.fast_entries.pop_front().unwrap();
-                batch.push((id, entry));
-            }
+            (fast_bs, &mut self.fast_entries)
         } else if min_size.is_none() && self.slow_entries.len() > 0 {
-            while batch.len() < slow_bs && self.slow_entries.len() > 0 {
-                let (_, (id, entry)) = self.slow_entries.pop_front().unwrap();
-                batch.push((id, entry));
-            }
-        }
+            (slow_bs, &mut self.slow_entries)
+        } else {
+            (0, &mut self.fast_entries)
+        };
 
+        let mut batch: Vec<(u64, Entry)> = Vec::with_capacity(budget);
+        while batch.len() < bs && entries.len() > 0 {
+            let (_, (id, entry)) = entries.pop_front().unwrap();
+            batch.push((id, entry));
+        }
         batch
     }
 
     fn batch_available(&mut self, prefer_fast: bool, bs: usize) -> bool {
-        let entries = if prefer_fast {
-            &self.fast_entries
-        } else {
-            &self.slow_entries
+        let entries = match prefer_fast {
+            true => &self.fast_entries,
+            false => &self.slow_entries,
         };
         (
+            // entire batch of punctual requests available
             entries.len() >= bs && entries[bs-1].0 >= 0.0
         ) || (
+            // any request running out of time (300ms buffer)
             entries.len() > 0 && entries[0].0 > (self.time_limit - 0.3)
         )
     }
@@ -428,7 +418,6 @@ impl Entries {
             entries.make_contiguous().sort_by(|(a, _), (b, _)| b.partial_cmp(a).unwrap());
         }
     }
-
 }
 
 
@@ -640,6 +629,56 @@ mod tests {
     fn default_state() -> State {
         State::new(false, 100, 200, 1, None)
     }
+
+    #[test]
+    fn test_smart_state() {
+        let max_input_length = 1024;
+        let max_total_tokens = 2048;
+        let mut state = BucketizedState::new(
+            true,
+            max_input_length,
+            max_total_tokens,
+            1,
+            None
+        );
+
+        for _ in 0..10 {
+            let (entry, _guard) = _get_entry(100);
+            state.append(entry);
+            let (entry, _guard) = _get_entry(500);
+            state.append(entry);
+        }
+
+        let next_batch = state.next_batch(None, max_input_length*4, max_total_tokens*4);
+        if let Some((entries, batch, _)) = next_batch {
+            assert_eq!(batch.size, 4);
+        }
+    }
+
+    #[test]
+    fn test_smart_state_get_only_one() {
+        let max_input_length = 1024;
+        let max_total_tokens = 2048;
+        let mut state = BucketizedState::new(
+            true,
+            max_input_length,
+            max_total_tokens,
+            1,
+            None
+        );
+
+        let (entry, _guard) = _get_entry(100);
+        state.append(entry);
+
+        let next_batch = state.next_batch(Some(4), max_input_length*4, max_total_tokens*4);
+        assert!(next_batch.is_none());
+
+        let next_batch = state.next_batch(None, max_input_length*4, max_total_tokens*4);
+        if let Some((entries, batch, _)) = next_batch {
+            assert_eq!(batch.size, 1);
+        }
+    }
+
 
     #[test]
     fn test_append() {
