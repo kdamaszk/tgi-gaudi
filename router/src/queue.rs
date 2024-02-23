@@ -529,6 +529,9 @@ impl BucketizedState {
             prefill_token_budget / self.max_input_length, // space left for prefill
             token_budget / self.max_total_tokens // space left for decode
         ) as usize;
+        if budget == 0 {
+            return None;
+        }
         let mut batch: Vec<(u64, Entry)> = self.entries.next_batch(min_size, budget);
 
         // Empty batch
