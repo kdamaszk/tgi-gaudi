@@ -341,8 +341,6 @@ struct Entries {
 
 impl Entries {
     fn new(max_input_length: u32) -> Self {
-        tracing::info!("Entries::new()");
-
         Self {
             time_limit: 2.0, // assume 2s limit per request
             fast_input_length: max_input_length / 4, // fast queries are smaller than 1/4 of max_input_length
@@ -352,8 +350,6 @@ impl Entries {
     }
 
     fn append(&mut self, id: u64, entry: Entry) {
-        tracing::info!("Entries::append()");
-
         match entry.request.input_length <= self.fast_input_length {
             true => self.fast_entries.push_back((0.0, (id, entry))),
             false => self.slow_entries.push_back((0.0, (id, entry))),
@@ -369,7 +365,6 @@ impl Entries {
     }
 
     fn next_batch(&mut self, min_size: Option<usize>, budget: usize) -> Vec<(u64, Entry)> {
-        tracing::info!("Entries::next_batch()");
         let fast_bs: usize = min(8, budget);
         let slow_bs: usize = min(4, budget);
 
@@ -400,7 +395,6 @@ impl Entries {
             true => &self.fast_entries,
             false => &self.slow_entries,
         };
-        tracing::info!("Entries::batch_available() entries.len() = {} | bs = {} | entries.len() >= bs = {}", entries.len(), bs, entries.len() >= bs);
 
         (
             // entire batch of punctual requests available
@@ -412,8 +406,6 @@ impl Entries {
     }
 
     fn update_queues(&mut self) {
-        tracing::info!("Entries::update_queues()");
-
         for entries in &mut [&mut self.fast_entries, &mut self.slow_entries] {
             for (time, (_, entry)) in entries.iter_mut() {
                 // update time as a seconds since queuing
@@ -466,8 +458,6 @@ impl BucketizedState {
         block_size: u32,
         window_size: Option<u32>
     ) -> Self {
-        tracing::info!("BucketizedState::new()");
-
         Self {
             entries: Entries::new(max_input_length),
             next_id: 0,
@@ -483,7 +473,6 @@ impl BucketizedState {
     /// Append an entry to the queue
     fn append(&mut self, mut entry: Entry) {
         // Create a span that will live as long as the entry is in the queue waiting to be batched
-        tracing::info!("BucketizedState::append()");
         let queue_span = info_span!(parent: &entry.span, "queued");
         entry.temp_span = Some(queue_span);
 
@@ -498,20 +487,13 @@ impl BucketizedState {
         prefill_token_budget: u32,
         token_budget: u32,
     ) -> Option<NextBatch> {
-        tracing::info!("BucketizedState::next_batch()");
-
         if self.entries.is_empty() {
-            tracing::info!("BucketizedState::next_batch() entries empty");
             return None;
         }
 
         // Check if we have enough entries
         if let Some(min_size) = min_size {
-            tracing::info!("BucketizedState::next_batch() Some(min_size)");
-
             if self.entries.len() < min_size {
-                tracing::info!("BucketizedState::next_batch() Some(min_size) > entries.len");
-
                 return None;
             }
         }
@@ -536,8 +518,6 @@ impl BucketizedState {
 
         // Empty batch
         if batch.len() == 0 {
-            tracing::info!("BucketizedState::next_batch() batch empty");
-
             return None;
         }
 
