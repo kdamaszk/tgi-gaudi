@@ -134,7 +134,8 @@ impl Client {
         }
 
         let mut id_counter: u64 = 0;
-        for shape in shapes.iter() {
+        for (index, shape) in shapes.iter().enumerate() {
+            tracing::event!(tracing::Level::INFO, "Warming up input shape {}x{}. Warmup progress {}/{}", shape.0, shape.1, index, shapes.len());
             // create two batches in order to trigger concatenate operation
             let batches: Vec<Batch> = vec![
                 self.create_warmup_batch(*shape, &mut id_counter, max_input_length, max_total_tokens, seq_bucket_size),
