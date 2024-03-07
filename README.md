@@ -44,7 +44,7 @@ To use [🤗 text-generation-inference](https://github.com/huggingface/text-gene
      -d '{"inputs":"What is Deep Learning?","parameters":{"max_new_tokens":32}}' \
      -H 'Content-Type: application/json'
    ```
-5. To run static benchmark test, please refer [TGI's benchmark tool](https://github.com/huggingface/text-generation-inference/tree/main/benchmark).
+5. To run static benchmark test, please refer to [TGI's benchmark tool](https://github.com/huggingface/text-generation-inference/tree/main/benchmark).
 
    To run it on the same machine, you can do the following:
    * `docker exec -it <docker name> bash` , pick the docker started from step 3 or 4 using docker ps
@@ -54,7 +54,7 @@ To use [🤗 text-generation-inference](https://github.com/huggingface/text-gene
 For more information and documentation about Text Generation Inference, checkout [the README](https://github.com/huggingface/text-generation-inference#text-generation-inference) of the original repo.
 
 Not all features of TGI are currently supported as this is still a work in progress.
-TGI on Intel Gaudi has been validated mainly with Llama model. Support for other models from Optimum Habana will be added successively
+TGI on Intel Gaudi has been validated mainly with Llama model. Support for other models from Optimum Habana will be added successively.
 
 
 ## Setup TGI
