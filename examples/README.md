@@ -1,6 +1,6 @@
 # TGI-Gaudi example
 
-This example provide a simple way of usage a `tgi-gaudi` with continuous batching. It uses a small dataset [DIBT/10k_prompts_ranked](https://huggingface.co/datasets/DIBT/10k_prompts_ranked) and presetn basic performance numbers.
+This example provide a simple way of usage of `tgi-gaudi` with continuous batching. It uses a small dataset [DIBT/10k_prompts_ranked](https://huggingface.co/datasets/DIBT/10k_prompts_ranked) and present basic performance numbers.
 
 ## Get started
 
@@ -12,7 +12,7 @@ pip install -r requirements
 
 ### Setup TGI server
 
-More details on runing the TGI server available [here](https://github.com/kdamaszk/tgi-gaudi/blob/habana-main/README.md#running-tgi-on-gaudi).
+More details on runing the TGI server available [here](https://github.com/huggingface/tgi-gaudi/blob/habana-main/README.md#running-tgi-on-gaudi).
 
 ### Run benchmark
 
