@@ -38,14 +38,15 @@ class TgiClient:
         Run generation for every sample in dataset.
         Creates a separate thread for every sample.
         """
-        threads = []
+        threads: List[threading.Thread] = []
         for sample in tqdm.tqdm(samples):
             self._semaphore.acquire()
             threads.append(
                 threading.Thread(
                     target=self._process_sample, args=[sample, max_new_tokens]
-                ).start()
+                )
             )
+            threads[-1].start()
         for thread in threads:
             if thread is not None:
                 thread.join()
