@@ -610,7 +610,7 @@ class CausalLM(Model):
 
         model = self.setup_quantization(model)
 
-        if model.config.model_type in MODELS_OPTIMIZED_WITH_STATIC_SHAPES:
+        if model.config.model_type not in MODELS_OPTIMIZED_WITH_STATIC_SHAPES:
             raise ValueError(f"Model type {model.config.model_type} is not supported!")
 
         if tokenizer.pad_token_id is None:
