@@ -1,4 +1,9 @@
+# Copyright (C) 2024 Habana Labs, Ltd. an Intel Company.
+
+import pytest
 import torch
+from transformers import AutoTokenizer
+
 from text_generation_server.utils.tokens import (
     StopSequenceCriteria,
     StoppingCriteria,
@@ -6,10 +11,8 @@ from text_generation_server.utils.tokens import (
     batch_top_tokens,
     make_tokenizer_optional,
 )
-from transformers import AutoTokenizer
 
 
-import pytest
 @pytest.fixture
 def skip_tokenizer_env_var():
     import os
@@ -81,10 +84,10 @@ def test_batch_top_tokens():
 
 def test_pass_through_tokenizer(skip_tokenizer_env_var):
     tokenizer = AutoTokenizer.from_pretrained(
-            'meta-llama/Llama-2-7b-chat-hf',
-            revision=None,
-            padding_side="left",
-            truncation_side="left",
+        'meta-llama/Llama-2-7b-chat-hf',
+        revision=None,
+        padding_side="left",
+        truncation_side="left",
     )
     tokenizer.pad_token_id = 2
     make_tokenizer_optional(tokenizer)
@@ -103,7 +106,3 @@ def test_pass_through_tokenizer(skip_tokenizer_env_var):
     assert torch.equal(tokenized_inputs['input_ids'][1][1023:], torch.tensor([tokenizer.pad_token_id]))
     decoded_tokens = tokenizer.decode(tokenized_inputs["input_ids"][0], skip_special_tokens=True, clean_up_tokenization_spaces=False)
     assert decoded_tokens.split(',')[1018:] == ['1', '1724', '338', '6483', '6509', '29973']
-
-
-if __name__ == "__main__":
-    test_pass_through_tokenizer()

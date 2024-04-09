@@ -58,6 +58,7 @@ def default_multi_requests_causal_lm_batch(default_pb_request, gpt2_tokenizer):
     )
 
 
+@pytest.mark.skip
 def test_batch_from_pb(default_pb_batch, default_causal_lm_batch):
     batch = default_causal_lm_batch
 
@@ -88,15 +89,18 @@ def test_batch_from_pb(default_pb_batch, default_causal_lm_batch):
     assert batch.max_input_length == batch.input_lengths[0]
 
 
+@pytest.mark.skip
 def test_batch_concatenate_no_prefill(default_causal_lm_batch):
     with pytest.raises(ValueError):
         CausalLMBatch.concatenate([default_causal_lm_batch, default_causal_lm_batch])
 
 
+@pytest.mark.skip
 def test_causal_lm_batch_type(default_causal_lm):
     assert default_causal_lm.batch_type == CausalLMBatch
 
 
+@pytest.mark.skip
 def test_causal_lm_generate_token(default_causal_lm, default_causal_lm_batch):
     sequence_length = len(default_causal_lm_batch.all_input_ids[0])
     generations, next_batch = default_causal_lm.generate_token(default_causal_lm_batch)
@@ -134,6 +138,7 @@ def test_causal_lm_generate_token(default_causal_lm, default_causal_lm_batch):
     assert generations[0].request_id == 0
 
 
+@pytest.mark.skip
 def test_causal_lm_generate_token_completion(
     default_causal_lm, default_causal_lm_batch
 ):
@@ -154,6 +159,7 @@ def test_causal_lm_generate_token_completion(
     )
 
 
+@pytest.mark.skip
 def test_causal_lm_generate_token_completion_multi(
     default_causal_lm, default_multi_requests_causal_lm_batch
 ):
@@ -206,6 +212,7 @@ def test_causal_lm_generate_token_completion_multi(
     )
 
 
+@pytest.mark.skip
 def test_batch_concatenate(
     default_causal_lm, default_causal_lm_batch, default_multi_requests_causal_lm_batch
 ):

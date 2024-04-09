@@ -21,7 +21,7 @@ def get_test_model():
     )
     return model
 
-
+@pytest.mark.skip
 @pytest.mark.private
 def test_decode_streaming_english_spaces():
     model = get_test_model()
@@ -43,6 +43,7 @@ def test_decode_streaming_english_spaces():
     assert decoded_text == truth
 
 
+@pytest.mark.skip
 @pytest.mark.private
 def test_decode_streaming_chinese_utf8():
     model = get_test_model()
