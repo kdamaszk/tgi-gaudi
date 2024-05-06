@@ -104,8 +104,8 @@ TGI supports FP8 precision runs within the limits provided by [Habana Quantizati
 
 Additional hints to quantize model for TGI when using `run_lm_eval.py`:
 * use `--limit_hpu_graphs` flag to save memory
-* try to model Your use case situation by adjusting `--batch_size` , `--max_new_tokens 512` and `--max_input_tokens 512` In case of memory issues, lower those values
-* use dataset/tasks suitable for Your use case (see `--help` for defining tasks/datasets)
+* try to model your use case situation by adjusting `--batch_size` , `--max_new_tokens 512` and `--max_input_tokens 512`; in case of memory issues, lower those values
+* use dataset/tasks suitable for your use case (see `--help` for defining tasks/datasets)
 
 ## Currently supported configurations
 
