@@ -75,8 +75,8 @@ To use [🤗 text-generation-inference](https://github.com/huggingface/text-gene
 ## Adjusting TGI parameters
 
 Maximum sequence length is controlled by two arguments:
-- `--max-input-length` is the maximum possible input prompt length. Default value is `1024`.
-- `--max-total-tokens` is the maximum possible total length of the sequence (input and output). Default value is `2048`.
+- `--max-input-length` is the maximum possible input prompt length. Default value is `4095`.
+- `--max-total-tokens` is the maximum possible total length of the sequence (input and output). Default value is `4096`.
 
 Maximum batch size is controlled by two arguments:
 - For prefill operation, please set `--max-prefill-total-tokens` as `bs * max-input-length`, where `bs` is your expected maximum prefill batch size.
@@ -106,7 +106,7 @@ Additional hints to quantize model for TGI when using `run_lm_eval.py`:
 * use `--limit_hpu_graphs` flag to save memory
 * try to model Your use case situation by adjusting `--batch_size` , `--max_new_tokens 512` and `--max_input_tokens 512` In case of memory issues, lower those values
 * use dataset/tasks suitable for Your use case (see `--help` for defining tasks/datasets)
- 
+
 ## Currently supported configurations
 
 Not all features of TGI are currently supported as this is still a work in progress.
