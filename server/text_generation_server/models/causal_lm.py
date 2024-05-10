@@ -402,11 +402,25 @@ class CausalLMBatch(Batch):
                 # append the dummy parameters for dummy request
                 parameters.append(parameters[0])
 
+        fsm_grammar_states = [0] * new_bs
+        dbg_trace(
+            "RECOMBINE", f"old fsm_grammar_states = {fsm_grammar_states}"
+        )
+        for batch_idx, batch in enumerate(batches):
+            for i, req in enumerate(batch.requests):
+                dbg_trace(
+                    "RECOMBINE", f"fsm change at index {req.idx} from request {i} from batch {batch_idx}"
+                )
+                fsm_grammar_states[req.idx] = batch.next_token_chooser.fsm_grammar_states[i]
+        dbg_trace(
+            "RECOMBINE", f"new fsm_grammar_states = {fsm_grammar_states}"
+        )
         next_token_chooser = HeterogeneousNextTokenChooser.from_pb(
             parameters,
             batches[dst_batch_idx].next_token_chooser.dtype,
             batches[dst_batch_idx].next_token_chooser.device,
             batches[dst_batch_idx].next_token_chooser.tokenizer,
+            fsm_grammar_states,
             quantization_enabled=hq_env.is_quantization_enabled,
         )
 
@@ -882,6 +896,7 @@ class CausalLM(Model):
                 for req_idx, req in enumerate(batch.requests):
                     requests_to_generate.append({
                         'req': req,
+                        'req_idx': req_idx,
                         'prev_req_idx': req.idx,
                         'batch_id': batch_id,
                         'seed': batch.next_token_chooser.seeds[req_idx],
@@ -968,6 +983,7 @@ class CausalLM(Model):
         for req_data in requests_to_generate:
             req = req_data['req']
             i = req_data['prev_req_idx']
+            req_idx = req_data['req_idx']
             prev_batch_id = req_data['batch_id']
             assert len(prev_batches) > prev_batch_id
             next_token_ids_cpu = prev_batches[prev_batch_id]['next_token_ids_cpu']
@@ -1087,12 +1103,20 @@ class CausalLM(Model):
 
                 generations.append(generation)
 
+            batch.next_token_chooser = (
+                batch.next_token_chooser.advance_grammar_single(req_idx, next_token_id)
+            )
+            dbg_trace(
+                "GENERATE_TOKEN", f"next_token = {next_token_id} fsm_state = {batch.next_token_chooser.fsm_grammar_states[req_idx]}"
+            )
+
             req.all_input_ids = all_input_ids
             req.input_length = new_input_length
             req.prefix_offset = prefix_offset
             req.read_offset = read_offset
 
         htorch.core.mark_step()
+
         self.step = self.step + 1
         if self.hb_profiler is not None:
             if self.step > self.profiling_wait_steps + self.profiling_warmup_steps + self.profiling_steps:
