@@ -1,7 +1,7 @@
 # Copyright (C) 2024 Habana Labs, Ltd. an Intel Company.
 
 import re
-from typing import List, Optional, Tuple, Union
+from typing import List, Optional, Tuple
 
 import math
 import torch
@@ -407,15 +407,25 @@ class HeterogeneousNextTokenChooser:
             self.fsm_grammar_states = other_new_states
         return self
 
-    def advance_grammar_single(self, grammar_state_index: int, next_id: Union[int, torch.Tensor]):
+    def advance_grammar_single(self, grammar_state_index: int, next_id: int):
         if self.grammar_processor is not None:
-            if isinstance(next_id, torch.Tensor):
-                next_id = next_id.item()
             self.fsm_grammar_states[grammar_state_index] = (
                 self.grammar_processor.advance_at_index(
                     next_id,
                     self.fsm_grammar_states[grammar_state_index],
                     grammar_state_index,
+                )
+            )
+        return self
+
+    def advance_grammar_single_with_past_state(
+        self, grammar_state_index: int, next_id: torch.Tensor, past_state: int
+    ):
+        if self.grammar_processor is not None:
+            next_id = next_id.item()
+            self.fsm_grammar_states[grammar_state_index] = (
+                self.grammar_processor.advance_at_index(
+                    next_id, past_state, grammar_state_index,
                 )
             )
         return self
@@ -472,11 +482,6 @@ class HeterogeneousNextTokenChooser:
         fsm_grammar_states: Optional[List[int]] = None,
         quantization_enabled: bool = False,
     ) -> "HeterogeneousNextTokenChooser":
-        # if fsm_grammar_states:
-        #     # append states for dummy requests
-        #     missing_states = len(pb) - len(fsm_grammar_states)
-        #     fsm_grammar_states.extend([0] * missing_states)
-
         return HeterogeneousNextTokenChooser(
             watermark=[pb_.watermark for pb_ in pb],
             temperature=[pb_.temperature for pb_ in pb],

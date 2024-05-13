@@ -397,24 +397,16 @@ class CausalLMBatch(Batch):
         top_n_tokens_tensor = torch.tensor(top_n_tokens, device=device, dtype=torch.int64)
 
         parameters = [r.data.parameters for r in flat_requests]
-        if len(flat_requests) < new_bs:
-            for i in range(new_bs-len(flat_requests)) :
-                # append the dummy parameters for dummy request
-                parameters.append(parameters[0])
+        # append the dummy parameters for dummy requests
+        parameters.extend(
+            [generate_pb2.NextTokenChooserParameters()] * (new_bs - len(flat_requests))
+        )
 
         fsm_grammar_states = [0] * new_bs
-        dbg_trace(
-            "RECOMBINE", f"old fsm_grammar_states = {fsm_grammar_states}"
-        )
-        for batch_idx, batch in enumerate(batches):
+        for batch in batches:
             for i, req in enumerate(batch.requests):
-                dbg_trace(
-                    "RECOMBINE", f"fsm change at index {req.idx} from request {i} from batch {batch_idx}"
-                )
                 fsm_grammar_states[req.idx] = batch.next_token_chooser.fsm_grammar_states[i]
-        dbg_trace(
-            "RECOMBINE", f"new fsm_grammar_states = {fsm_grammar_states}"
-        )
+
         next_token_chooser = HeterogeneousNextTokenChooser.from_pb(
             parameters,
             batches[dst_batch_idx].next_token_chooser.dtype,
@@ -468,12 +460,13 @@ class CausalLMBatch(Batch):
         # this means that we cannot shift inputs to the left after a long input sequence
         # was filtered out
         new_bs = round_up(len(requests), PREFILL_BATCH_BUCKET_SIZE)
-        dummy_inputs = ["?"] * (new_bs - len(requests))
+        missing_inputs = new_bs - len(requests)
+        dummy_inputs = ["?"] * missing_inputs
         parameters = [r.parameters for r in pb.requests]
-        if len(pb.requests) < new_bs:
-            for i in range(new_bs-len(pb.requests)) :
-                #append the dummy parameters for dummy request
-                parameters.append(parameters[0])
+        # append the dummy parameters for dummy request
+        parameters.extend(
+            [generate_pb2.NextTokenChooserParameters()] * missing_inputs
+        )
 
         next_token_chooser = HeterogeneousNextTokenChooser.from_pb(
             pb=parameters,
@@ -896,7 +889,6 @@ class CausalLM(Model):
                 for req_idx, req in enumerate(batch.requests):
                     requests_to_generate.append({
                         'req': req,
-                        'req_idx': req_idx,
                         'prev_req_idx': req.idx,
                         'batch_id': batch_id,
                         'seed': batch.next_token_chooser.seeds[req_idx],
@@ -904,6 +896,7 @@ class CausalLM(Model):
                         'top_n_tokens': batch.top_n_tokens[req_idx],
                         'top_token_ids': batch_top_token_ids[req_idx],
                         'top_token_logprobs': batch_top_token_logprobs[req_idx],
+                        'grammar_state': batch.next_token_chooser.fsm_grammar_states[req_idx],
                     })
 
                 htorch.core.mark_step()
@@ -983,7 +976,6 @@ class CausalLM(Model):
         for req_data in requests_to_generate:
             req = req_data['req']
             i = req_data['prev_req_idx']
-            req_idx = req_data['req_idx']
             prev_batch_id = req_data['batch_id']
             assert len(prev_batches) > prev_batch_id
             next_token_ids_cpu = prev_batches[prev_batch_id]['next_token_ids_cpu']
@@ -1002,6 +994,7 @@ class CausalLM(Model):
             top_n_tokens = req_data['top_n_tokens']
             top_token_ids = req_data['top_token_ids']
             top_token_logprobs = req_data['top_token_logprobs']
+            grammar_state = req_data['grammar_state']
 
             # Append next token to all tokens
             all_input_ids[input_length] = next_token_id
@@ -1104,10 +1097,9 @@ class CausalLM(Model):
                 generations.append(generation)
 
             batch.next_token_chooser = (
-                batch.next_token_chooser.advance_grammar_single(req_idx, next_token_id)
-            )
-            dbg_trace(
-                "GENERATE_TOKEN", f"next_token = {next_token_id} fsm_state = {batch.next_token_chooser.fsm_grammar_states[req_idx]}"
+                batch.next_token_chooser.advance_grammar_single_with_past_state(
+                    req.idx, next_token_id, grammar_state
+                )
             )
 
             req.all_input_ids = all_input_ids
@@ -1116,7 +1108,6 @@ class CausalLM(Model):
             req.read_offset = read_offset
 
         htorch.core.mark_step()
-
         self.step = self.step + 1
         if self.hb_profiler is not None:
             if self.step > self.profiling_wait_steps + self.profiling_warmup_steps + self.profiling_steps:
