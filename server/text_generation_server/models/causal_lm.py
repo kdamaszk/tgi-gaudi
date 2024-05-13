@@ -896,7 +896,7 @@ class CausalLM(Model):
                         'top_n_tokens': batch.top_n_tokens[req_idx],
                         'top_token_ids': batch_top_token_ids[req_idx],
                         'top_token_logprobs': batch_top_token_logprobs[req_idx],
-                        'grammar_state': batch.next_token_chooser.fsm_grammar_states[req_idx],
+                        'grammar_state': batch.next_token_chooser.fsm_grammar_states[req.idx],
                     })
 
                 htorch.core.mark_step()
