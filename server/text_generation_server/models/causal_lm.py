@@ -398,11 +398,12 @@ class CausalLMBatch(Batch):
 
         parameters = [r.data.parameters for r in flat_requests]
         # append the dummy parameters for dummy requests
+        batch_size = batches[dst_batch_idx].batch_size
         parameters.extend(
-            [generate_pb2.NextTokenChooserParameters()] * (new_bs - len(flat_requests))
+            [generate_pb2.NextTokenChooserParameters()] * (batch_size - len(flat_requests))
         )
 
-        fsm_grammar_states = [0] * new_bs
+        fsm_grammar_states = [0] * batch_size
         for batch in batches:
             for i, req in enumerate(batch.requests):
                 fsm_grammar_states[req.idx] = batch.next_token_chooser.fsm_grammar_states[i]
