@@ -618,11 +618,24 @@ class CausalLM(Model):
             if hasattr(config, "rope_scaling"):
                 model_kwargs["rope_scaling"] = self.get_rope_scaling()
 
+            # Setup disk offload
+            from accelerate import infer_auto_device_map, init_empty_weights
+
+            with init_empty_weights():
+                model = AutoModelForCausalLM.from_config(config)
+            max_memory = {"cpu": "10GiB"}
+            device_map = infer_auto_device_map(
+                model, max_memory=max_memory, dtype=dtype
+            )
+
             model = AutoModelForCausalLM.from_pretrained(
                 model_id,
                 revision=revision,
                 torch_dtype=dtype,
                 trust_remote_code=trust_remote_code,
+                device_map=device_map,
+                offload_folder="/tmp/offload_folder/",
+                offload_state_dict=True,
                 **model_kwargs
             )
             model = self.prepare_model_for_quantization(model)
