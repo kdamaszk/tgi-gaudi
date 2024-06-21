@@ -160,10 +160,10 @@ class HeterogeneousFrequencyPenaltyLogitsProcessor(LogitsProcessor):
 
         # Calculate the frequency for each token so far
         token_freq = torch.zeros(
-            batch_size, vocab_size, dtype=input_ids.dtype, device=input_ids.device
+            batch_size, vocab_size, dtype=scores.dtype, device=scores.device
         )
         token_freq.scatter_add_(
-            1, input_ids, torch.ones_like(input_ids, dtype=input_ids.dtype)
+            1, input_ids, torch.ones_like(input_ids, dtype=scores.dtype, device=scores.device)
         )
         token_freq /= input_size
 
