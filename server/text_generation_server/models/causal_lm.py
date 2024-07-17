@@ -657,7 +657,7 @@ class CausalLM(Model):
             from habana_frameworks.torch.hpu import wrap_in_hpu_graph
             model = wrap_in_hpu_graph(model, disable_tensor_cache=True)
         else:
-            if LAZY_MODE == 0: 
+            if LAZY_MODE == 0:
                 # It is said that "keep_input_mutations" is safe for inference to be done
                 dbg_trace(
                     "TORCH COMPILE", f'Torch compiling of model')
@@ -797,14 +797,7 @@ class CausalLM(Model):
         if hq_env.is_quantization_enabled:
             if model.config.model_type == "llama":
                 self.patch_scoped_linear_all_reduce(model)
-            import habana_quantization_toolkit
-            habana_quantization_toolkit.prep_model(model)
-        return model
-
-    def finish_quantization_measurements(self, model):
-        if hq_env.is_quantization_enabled:
-            import habana_quantization_toolkit
-            habana_quantization_toolkit.finish_measurements(self.model)
+            model = hq_env.prepare_model_for_quantization(model)
         return model
 
     def patch_scoped_linear_all_reduce(self, model):
